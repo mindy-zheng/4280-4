@@ -11,9 +11,10 @@
 #include <stdlib.h>
 #include <string.h> 
 #include <sys/wait.h>
+#include <stdarg.h> 
 
 void help() { 
-	printf("This program is designed to launch child processes specified by the user. Here are the parameters:\n"); 
+	printf("This program is designed to simulate an operating system scheduler using multi-level feedback queuing:\n"); 
 	printf("[-h] - outputs a help message and terminates the program.\n");
 	printf("[-n proc] - specifies total number of child processes.\n");
 	printf("[-s simul] - specifies maximum number of child processes that can simultaneously run.\n");
@@ -95,7 +96,98 @@ void addPCB(struct PCB* processTable, pid_t pid, int* seconds, int* nanoseconds)
         }
     }
 }
+
+// Functions for Queue (Source: https://www.geeksforgeeks.org/queue-linked-list-implementation/
+// LL node to store a queue entry 
+struct QNode { 
+	int key; 
+	struct QNode* next; 
+}; 
+
+// The queue, front stores the front node of LL and rear stores the last node of LL 
+struct Queue { 
+	struct QNode *front, *rear; 
+}; 
+
+// A utility function to create a new linked list node
+struct QNode *newNode (int x) { 
+	struct QNode* temp = (struct QNode*)malloc(sizeof(struct QNode)); 
+	temp -> key = x; 
+	temp -> next = NULL; 
+	return temp; 
+} 
+
+// A utility function to create an empty queue 
+struct Queue* createQueue() { 
+	struct Queue* q = (struct Queue*)malloc(sizeof(struct Queue)); 
+	q-> front = q-> rear = NULL; 
+	return q; 
+} 
+
+// The function to add a key x to queue q 
+void enQueue(struct Queue* q, int x) { 
+	// Create a new LL node 
+	struct QNode* temp = newNode(x); 
+	// If queue is empty, then new node is front and rear both 
+	if (q-> rear == NULL) { 
+		q-> front = q-> rear = temp; 
+		return; 
+	}
+	// Add the new node at the end of queue and change rear 
+	q-> rear -> next = temp; 
+	q-> rear = temp; 
+} 
+
+// Function to remove a key from given queue q 
+void deQueue(struct Queue* q) { 
+	// If queue is empty, return NULL 
+	if (q-> front == NULL) { 
+		return; 
+	} 
+
+	// Store previous front and move front one node ahead 
+	struct QNode *temp = q-> front; 
+	q-> front = q-> front-> next; 
+
+	// If front becomes NULL, then change the rear to NULL as well 
+	if (q-> front == NULL) { 
+		q-> rear = NULL; 
+	} 
+	
+	free(temp); 
+}  
  
+// Message queue struct 
+typedef struct msgbuffer { 
+	long mtype; 
+	int intData; 
+	char strData[100]; 
+} msgbuffer; 
+
+int random_num(int min, int max) { 
+	if (min == max) { 
+		return min; 
+	} else { 
+		return min + rand() / (RAND_MAX / (max-min + 1) + 1);
+	}
+}
+
+// Limit logfile from reaching more than 10k lines 
+int lfprintf(FILE *stream,const char *format, ... ) {
+    static int lineCount = 0;
+    lineCount++;
+
+    if (lineCount > 10000)
+        return 1;
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(stream,format, args);
+    va_end(args);
+
+    return 0;
+}
+
 
 int main(int argc, char **argv) { 
 	// setting up signal handlers 
@@ -132,15 +224,34 @@ int main(int argc, char **argv) {
 		processTable[i].startSeconds = 0;
 		processTable[i].startNano = 0;
     }
+
+	msgbuffer buf; 
+	int msqid; 
+	buf.mtype = 1; 
+	key_t msgkey; 
+	system("touch msgq.txt"); 
+
+	// Generating key for message queue
+	if ((msgkey = ftok("msgq.txt", 1)) == -1) { 
+		perror("ftok"); 
+		exit(1); 
+	} 
 	
+	if ((msqid = msgget(msgkey, 0666 | IPC_CREAT)) == -1) { 
+		perror("msgget in parent"); 
+		exit(1); 
+	} 
+	printf("Message queue sucessfully set up!\n"); 	
+
 	int opt; 
 	const char optstr[] = "hn:s:t:i:"; 
 	int proc = 0; // total number of processes -n 
 	int simul = 0; // maximum number of child processes that can simultaneously run -s 
 	int timeLimit = 0; // time limit for children -t
 	int intervalMs = 1 * MSCONVERSION; 
+	char *filename = NULL; // initialize filename
 	
-	// oss [-h] [-n proc] [-s simul] [-t timelimitForChildren] [-i intervalInMsToLaunchChildren]
+	// oss [-h] [-n proc] [-s simul] [-t timelimitForChildren] [-i intervalInMsToLaunchChildren] [-f logfile] 
 	while ((opt = getopt(argc, argv, optstr)) != -1) { 
 		switch(opt) { 
 			case 'h': 
@@ -168,23 +279,29 @@ int main(int argc, char **argv) {
 			case 'i': 
 				intervalMs = atoi(optarg)*pow(10,6);
 				break; 
+			case 'f': 
+				filename = optarg; // get the filename 
+				break; 
 			default: 
 				help(); 
 				exit(EXIT_FAILURE);
 		}
 	}
 
-	/*
-	while (stillChildrenToLaunch) {
-		incrementClock();
-		Every half a second of simulated clock time, output the process table to the screen
-		checkIfChildHasTerminated();
-		if (childHasTerminated) {
-			updatePCBOfTerminatedChild;
-		}
-		possiblyLaunchNewChild(obeying process limits and time bound limits)
-}
-	*/
+	if (filename == NULL) { 
+		printf("Did not read filename \n"); 
+		help(); 
+		exit(EXIT_FAILURE); 
+	} 
+
+	// Create file for oss.c output ONLY
+	FILE *fptr = fopen(filename, "w"); 
+	if (fptr == NULL) { 
+		perror("Error in file creation");	
+		exit(EXIT_FAILURE);
+	} 
+
+
 	int launched = 0, simultaneous_count = 0, pid_finished = 0, flag = 0, finished_total = 0, interval = 0;
 	pid_t pid; 
 	
