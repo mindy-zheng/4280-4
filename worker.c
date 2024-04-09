@@ -4,23 +4,27 @@
 #include<stdlib.h>
 #include<sys/shm.h>
 #include<sys/ipc.h>
-#include <math.h> 
+#include<math.h> 
+#include<string.h> 
+#include<sys/msg.h>
+#include<stdbool.h>
 
 // By Mindy Zheng
 
 #define SH_KEY1 89918991
 #define SH_KEY2 89928992
-#define PERMS 0777
+#define PERMS 0666
 #define ONE_SEC_NANO 1000000000 // 1,000,000,000 (billion) nanoseconds is equal to 1 second 
 
 // Message queue struct
-typedef struct msgbuffer {                                                      long mtype;
+typedef struct msgbuffer {   
+    long mtype;
     int intData;
     int TQ; // Time quantum                                                 } msgbuffer;
-
+} msgbuffer; 
 // Random number generator (source: https://stackoverflow.com/questions/62649232/use-rand-in-c-to-get-a-different-number-every-run-without-using-time-or-getp) 
 static int randomize_helper(FILE *in) {
-    unsigned int  seed;
+    unsigned int seed;
     if (!in)
          return -1;
 
@@ -46,16 +50,29 @@ static int randomize(void) {
     return -1;
 }
 
+// Function to check if termination time is greater than current 
+bool terminationTimeCheck(int term_seconds, int term_nanoseconds, int* seconds, int* nanoseconds) {
+    return ((term_seconds == *seconds && term_nanoseconds > *nanoseconds) || term_seconds > *seconds);
+}
+
 int main(int argc, char** argv) {
-	// printf("We are in worker, setting up memory pointers\n"); // Debugging statement 
+	printf("We are in worker, setting up memory pointers and message buffers\n"); // Debugging statement 
 	msgbuffer buf; 
 	buf.mtype = 1; 
 	int msqid = 0; 
-	key_t key; 
+	key_t msgkey; 
 
-	if ((msgkey = ftok("msgq.txt", 1)) == -1) {                                     perror("ftok");
+	if ((msgkey = ftok("msgq.txt", 1)) == -1) {                                     
+		perror("ftok");
         exit(1);
     }
+		
+	if ((msqid = msgget(msgkey, 0644)) == -1) { 
+		perror("msgget in child"); 
+		printf("Error in worker: creating message queue"); 
+		exit(1); 
+	} 
+	
 	
 	// Setting up shared memory pointer for seconds channel 
 	int sh_id = shmget(SH_KEY1, sizeof(int) *10, IPC_CREAT | PERMS);
@@ -100,28 +117,33 @@ int main(int argc, char** argv) {
 	int TQ_percentage; 
 	int early_termination = 0; 
 	
-	
-	while ((term_seconds == *seconds && term_nanoseconds > *nanoseconds) || term_seconds > *seconds) { 
-		// Implementing message recieving queue 
-		if (msgrcv(msqid, &buf, sizeof(msgbuffer), getpid(), 0) == -1) { 
+	while (terminationTimeCheck(term_seconds, term_nanoseconds, seconds, nanoseconds)) { 
+		// Implementing message queue to recieve a message 
+		if(msgrcv(msqid, &buf, sizeof(msgbuffer), getpid(), 0) == -1) { 
 			perror("Failed to recieve message\n"); 
 			exit(1); 
 		} 
-		
-		int chance = rand() % 51; 
-		termination_probability = rand() % 101;
-		if (chance <= termination_probability) { 
+		// If the random number generates a number less than or equal to the termination probability... then 
+		if (rand() % 501 <= termination_probability) { 
+			// Calculate percentage of the time quantum used 
+			TQ_percentage = rand() % 101; 
+			// Update the time quantum to negative to indicate a process has been terminated 
 			buf.TQ = -(buf.TQ * termination_probability / 100); 
 			buf.mtype = ppid; 
 			buf.intData = pid; 
+			
+			//  Send message to the parent 
 			if (msgsnd(msqid, &buf, sizeof(msgbuffer) - sizeof(long), 0) == -1) { 
 				perror("msgsnd to parent failed\n"); 
 				exit(1); 
 			} 
-			early_termination = 1; 
+			
+			early_termination = 1; // break out the loop 
 			break; 
-		} else if (chance <= IO_block) { 
-			buf.TQ *- termination_probability / 100; 
+		// If a random number is less than or equal to the probability of an interrupt / block 
+		} else if (rand() % 201 <= IO_block) { 
+			TQ_percentage = rand() % 101; 
+			buf.TQ = buf.TQ * TQ_percentage/100; 
 		} 
 
 		// Default if process uses entire time quantum 
@@ -132,18 +154,22 @@ int main(int argc, char** argv) {
 			perror("msgsnd to parent failed.\n"); 
 			exit(1); 
 		} 
-		printf("Message sent back from worker/child\n"); 
 	}
+	// If the process did not terminate early 
 	if (early_termination == 0) { 
 		buf.mtype = ppid; 
 		buf.intData = pid; 
 		int time_elapsed = (sys_seconds * ONE_SEC_NANO + sys_nano) - (term_seconds * ONE_SEC_NANO + term_nanoseconds); 
-		buf.TQ = -(buf.TQ - time_elapsed); 
+		buf.TQ = -(buf.TQ - time_elapsed);
+		
+		// Send message to the parent process  
+		if(msgsnd(msqid, &buf, sizeof(msgbuffer)-sizeof(long), 0) == -1){
+            perror("msgsnd to parent failed\n");
+            exit(1);
 		}
 	} 
 		
 		
-	printf("Detatching worker shared memory\n"); 	
 	// detatch shared memory channels 
 	shmdt(seconds); 
 	shmdt(nanoseconds); 
