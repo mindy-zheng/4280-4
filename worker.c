@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
 	msgbuffer buf; 
 	buf.mtype = 1; 
 	int msqid = 0; 
-	key_t msgkey; 
+	key_t msgkey;
 
 	if ((msgkey = ftok("msgq.txt", 1)) == -1) {                                     
 		perror("ftok");
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
 	
 	
 	// Setting up shared memory pointer for seconds channel 
-	int sh_id = shmget(SH_KEY1, sizeof(int) *10, IPC_CREAT | PERMS);
+	int sh_id = shmget(SH_KEY1, sizeof(int), IPC_CREAT | 0666);
     if (sh_id <= 0) {
         fprintf(stderr,"Shared memory get failed\n");
         exit(1);

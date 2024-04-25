@@ -70,7 +70,7 @@ void incrementClock(int *sec, int *nano, int dispatch) {
 // Key for shared memory stuff 
 #define SH_KEY1 89918991
 #define SH_KEY2 89928992
-#define PERMS 0777
+#define PERMS 0644
 
 /* random number generator - if it is called with -t 7, then when calling worker processes, it should call them with a time interval randomly between 1 second and 7 seconds (with nanoseconds also random).*/ 
 
@@ -326,9 +326,9 @@ int main(int argc, char **argv) {
 
 	// Shared memory system clock 
 	// Channel for seconds 
-	int sh_sec = shmget(SH_KEY1, sizeof(int) *10, PERMS | IPC_CREAT); 
-	if (sh_sec <= 0) { 
-		fprintf(stderr,"Shared memory get failed in seconds\n");
+	int sh_sec = shmget(SH_KEY1, sizeof (int), 0666 | IPC_CREAT); 
+	if (sh_sec == -1) {
+		perror("Shared memory get failed in seconds channel\n"); 
 		exit(1); 
 	}
 	int *seconds = shmat(sh_sec, 0, 0); 
